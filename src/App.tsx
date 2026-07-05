@@ -3,6 +3,8 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
 import type { PartialBlock } from '@blocknote/core'
 import JSZip from 'jszip'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import '@blocknote/mantine/style.css'
@@ -458,6 +460,7 @@ function App() {
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null)
   const editorWrapRef = useRef<HTMLDivElement | null>(null)
   const ldocImportRef = useRef<HTMLInputElement | null>(null)
+  const importLdocPathRef = useRef<((path: string) => void) | null>(null)
 
   useEffect(() => {
     try {
@@ -493,6 +496,17 @@ function App() {
   const openDocs = state.openDocIds
     .map((id) => state.docs.find((doc) => doc.id === id))
     .filter(Boolean) as DocNode[]
+
+  useEffect(() => {
+    if (!activeDoc || state.openDocIds.includes(activeDoc.id)) return
+    setState((current) => ({
+      ...current,
+      openDocIds: current.openDocIds.includes(activeDoc.id)
+        ? current.openDocIds
+        : [...current.openDocIds, activeDoc.id],
+    }))
+  }, [activeDoc, state.openDocIds])
+
   const allTemplates = useMemo(
     () => [...templates, ...state.customTemplates].filter((template) => !state.deletedTemplateIds.includes(template.id)),
     [state.customTemplates, state.deletedTemplateIds],
@@ -628,7 +642,7 @@ function App() {
     setState((current) => {
       const openDocIds = current.openDocIds.filter((id) => id !== docId)
       const activeDocId =
-        current.activeDocId === docId ? openDocIds.at(-1) || current.activeDocId : current.activeDocId
+        current.activeDocId === docId ? openDocIds.at(-1) || '' : current.activeDocId
       return { ...current, openDocIds, activeDocId }
     })
   }
@@ -907,6 +921,39 @@ function App() {
       window.alert(error instanceof Error ? error.message : '导入 .ldoc 失败。')
     }
   }
+
+  const importLdocPath = async (path: string) => {
+    try {
+      const data = await invoke<number[]>('read_ldoc_file', { path })
+      await importLdocData(new Uint8Array(data), path.split(/[\\/]/).at(-1) || '导入文档.ldoc')
+    } catch (error) {
+      console.error(error)
+      window.alert(error instanceof Error ? error.message : '打开 .ldoc 失败。')
+    }
+  }
+
+  importLdocPathRef.current = importLdocPath
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+    let unlisten: (() => void) | undefined
+
+    invoke<string[]>('initial_open_files')
+      .then((paths) => {
+        paths.forEach((path) => importLdocPathRef.current?.(path))
+      })
+      .catch((error) => console.error(error))
+
+    listen<string[]>('ldoc-open', (event) => {
+      event.payload.forEach((path) => importLdocPathRef.current?.(path))
+    })
+      .then((handler) => {
+        unlisten = handler
+      })
+      .catch((error) => console.error(error))
+
+    return () => unlisten?.()
+  }, [])
 
   const saveDocAsTemplate = (docId: string) => {
     const doc = state.docs.find((item) => item.id === docId)
