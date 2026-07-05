@@ -848,22 +848,61 @@ button:hover {
 }
 
 .template-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: start;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbefd9;
+  padding: 4px;
+}
+
+.template-create {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   text-align: left;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 3px 8px;
-  padding: 10px;
+  padding: 6px;
 }
 
-.template-card strong,
-.template-card small {
+.template-create:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.template-create strong,
+.template-create small {
   min-width: 0;
 }
 
-.template-card small {
+.template-create small {
   grid-column: 2;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.template-delete {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.template-delete:hover {
+  background: #ead5b8;
+  box-shadow: none;
+  transform: none;
+  color: var(--danger);
 }
 
 .template-card.custom {

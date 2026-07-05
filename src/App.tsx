@@ -47,6 +47,7 @@ type AppState = {
   libraries: ProjectLibrary[]
   docs: DocNode[]
   customTemplates: Template[]
+  deletedTemplateIds: string[]
 }
 
 type MenuState = {
@@ -190,6 +191,7 @@ const seedState: AppState = {
   activeDocId: 'doc-welcome',
   openDocIds: ['doc-welcome', 'doc-prompt'],
   customTemplates: [],
+  deletedTemplateIds: [],
   libraries: [
     {
       id: INBOX_LIBRARY_ID,
@@ -345,6 +347,7 @@ function loadState(): AppState {
           ? [activeDocId]
           : [],
       customTemplates: Array.isArray(parsed.customTemplates) ? parsed.customTemplates : [],
+      deletedTemplateIds: Array.isArray(parsed.deletedTemplateIds) ? parsed.deletedTemplateIds : [],
     }
   } catch {
     return seedState
@@ -427,7 +430,10 @@ function App() {
   const openDocs = state.openDocIds
     .map((id) => state.docs.find((doc) => doc.id === id))
     .filter(Boolean) as DocNode[]
-  const allTemplates = useMemo(() => [...templates, ...state.customTemplates], [state.customTemplates])
+  const allTemplates = useMemo(
+    () => [...templates, ...state.customTemplates].filter((template) => !state.deletedTemplateIds.includes(template.id)),
+    [state.customTemplates, state.deletedTemplateIds],
+  )
   const libraries = useMemo(
     () => [...state.libraries].sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, 'zh-CN')),
     [state.libraries],
@@ -707,6 +713,16 @@ function App() {
     const libraryId = selectedLibraryId || (activeDoc && !activeDoc.isDraft ? activeDoc.libraryId : inboxLibraryId)
     createDoc(template, libraryId, parentId, false)
     if (parentId) setCollapsed((current) => ({ ...current, [parentId]: false }))
+  }
+
+  const deleteTemplate = (templateId: string) => {
+    setState((current) => ({
+      ...current,
+      customTemplates: current.customTemplates.filter((template) => template.id !== templateId),
+      deletedTemplateIds: current.deletedTemplateIds.includes(templateId)
+        ? current.deletedTemplateIds
+        : [...current.deletedTemplateIds, templateId],
+    }))
   }
 
   const saveDocAsTemplate = (docId: string) => {
@@ -1150,17 +1166,27 @@ function App() {
         <div className="panel">
           <h2>模板</h2>
           <div className="template-list">
+            {allTemplates.length === 0 ? <span className="muted">还没有可用模板</span> : null}
             {allTemplates.map((template) => (
-              <button
-                className={`template-card ${template.custom ? 'custom' : ''}`}
-                key={template.id}
-                type="button"
-                onClick={() => createFromTemplate(template)}
-              >
-                <span>{template.emoji}</span>
-                <strong>{template.name}</strong>
-                <small>{template.custom ? `自定义 · ${template.description}` : template.description}</small>
-              </button>
+              <div className={`template-card ${template.custom ? 'custom' : ''}`} key={template.id}>
+                <button
+                  className="template-create"
+                  type="button"
+                  onClick={() => createFromTemplate(template)}
+                >
+                  <span>{template.emoji}</span>
+                  <strong>{template.name}</strong>
+                  <small>{template.custom ? `自定义 · ${template.description}` : template.description}</small>
+                </button>
+                <button
+                  className="template-delete"
+                  type="button"
+                  title="删除模板"
+                  onClick={() => deleteTemplate(template.id)}
+                >
+                  x
+                </button>
+              </div>
             ))}
           </div>
         </div>
