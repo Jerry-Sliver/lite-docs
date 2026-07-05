@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light;
+  --bg: #f4ead7;
+  --paper: #fff8ec;
+  --text: #2f261f;
+  --muted: #7b6a58;
+  --line: #dcc9aa;
+  --accent: #b56036;
+  --accent-dark: #8f4528;
+  --accent-soft: #f0d6bd;
+  --danger: #9a3f2d;
+  --shadow: 0 12px 34px rgba(85, 55, 28, 0.1);
+  --font-body:
+    "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia,
+    "Times New Roman", serif;
+  font-family: var(--font-body);
+  color: var(--text);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255, 250, 238, 0.75), transparent 34%),
+    linear-gradient(135deg, rgba(120, 77, 37, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, rgba(120, 77, 37, 0.025) 25%, transparent 25%),
+    var(--bg);
+  background-size: auto, 28px 28px, 34px 34px, auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 0;
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
