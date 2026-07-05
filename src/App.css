@@ -122,6 +122,17 @@ button:hover {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.sidebar-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-actions button {
+  min-height: 32px;
+  text-align: left;
+  padding: 6px 10px;
+}
+
 .section-label {
   color: var(--muted);
   font-size: 12px;

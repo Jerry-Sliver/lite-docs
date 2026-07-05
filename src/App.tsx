@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
 import type { PartialBlock } from '@blocknote/core'
+import JSZip from 'jszip'
+import { open, save } from '@tauri-apps/plugin-dialog'
+import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import '@blocknote/mantine/style.css'
 import './App.css'
 
@@ -64,8 +67,28 @@ type LibraryDialogState = {
   description: string
 }
 
+type LdocManifest = {
+  format: 'lite-doc'
+  mime: 'application/x-lite-doc'
+  version: 1
+  id: string
+  title: string
+  emoji: string
+  createdAt: string
+  updatedAt: string
+  generator: string
+  resources: Array<{
+    id: string
+    path: string
+    mime: string
+    name: string
+  }>
+}
+
 const STORAGE_KEY = 'light-docs-workspace-v1'
 const INBOX_LIBRARY_ID = 'lib-inbox'
+const LDOC_MIME = 'application/x-lite-doc'
+const isTauriRuntime = () => '__TAURI_INTERNALS__' in window
 
 const now = () => new Date().toISOString()
 
@@ -131,6 +154,45 @@ const bullet = (text: string): PartialBlock => ({
   type: 'bulletListItem',
   content: text,
 })
+
+const safeFileName = (value: string) =>
+  (value.trim() || '未命名文档')
+    .split('')
+    .map((char) => (char.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(char) ? '-' : char))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80)
+
+const extractText = (content: PartialBlock['content']) => {
+  if (!content) return ''
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if ('text' in item && typeof item.text === 'string') return item.text
+        return ''
+      })
+      .join('')
+  }
+  return ''
+}
+
+const blocksToPreviewMarkdown = (blocks: PartialBlock[]) =>
+  blocks
+    .map((block) => {
+      const text = extractText(block.content)
+      if (!text) return ''
+      if (block.type === 'heading') {
+        const level = typeof block.props?.level === 'number' ? block.props.level : 2
+        return `${'#'.repeat(level)} ${text}`
+      }
+      if (block.type === 'bulletListItem') return `- ${text}`
+      if (block.type === 'numberedListItem') return `1. ${text}`
+      return text
+    })
+    .filter(Boolean)
+    .join('\n\n')
 
 const templates: Template[] = [
   {
@@ -395,6 +457,7 @@ function App() {
   const [libraryDialog, setLibraryDialog] = useState<LibraryDialogState | null>(null)
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null)
   const editorWrapRef = useRef<HTMLDivElement | null>(null)
+  const ldocImportRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     try {
@@ -725,6 +788,126 @@ function App() {
     }))
   }
 
+  const exportDocAsLdoc = async (docId: string) => {
+    const doc = state.docs.find((item) => item.id === docId)
+    if (!doc) return
+    const zip = new JSZip()
+    const manifest: LdocManifest = {
+      format: 'lite-doc',
+      mime: LDOC_MIME,
+      version: 1,
+      id: doc.id,
+      title: doc.title,
+      emoji: doc.emoji,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      generator: 'Lite Docs',
+      resources: [],
+    }
+
+    zip.file('mimetype', LDOC_MIME)
+    zip.file('manifest.json', JSON.stringify(manifest, null, 2))
+    zip.file('document.json', JSON.stringify(cloneBlocks(doc.content), null, 2))
+    zip.file('preview.md', blocksToPreviewMarkdown(doc.content))
+
+    const data = await zip.generateAsync({
+      type: 'uint8array',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    })
+    const fileName = `${safeFileName(doc.title)}.ldoc`
+    if (isTauriRuntime()) {
+      const path = await save({
+        title: '导出 .ldoc',
+        defaultPath: fileName,
+        filters: [{ name: 'Lite Docs', extensions: ['ldoc'] }],
+      })
+      if (path) await writeFile(path, data)
+      setMenuState(null)
+      return
+    }
+
+    const blob = new Blob([new Uint8Array(data)], { type: LDOC_MIME })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    setMenuState(null)
+  }
+
+  const importLdocData = async (data: Blob | Uint8Array, fallbackTitle: string) => {
+    try {
+      const zip = await JSZip.loadAsync(data)
+      const mimetype = (await zip.file('mimetype')?.async('string'))?.trim()
+      const manifestText = await zip.file('manifest.json')?.async('string')
+      const documentText = await zip.file('document.json')?.async('string')
+      if (mimetype !== LDOC_MIME || !manifestText || !documentText) {
+        throw new Error('不是有效的 .ldoc v1 文件。')
+      }
+
+      const manifest = JSON.parse(manifestText) as Partial<LdocManifest>
+      const blocks = JSON.parse(documentText) as PartialBlock[]
+      if (manifest.format !== 'lite-doc' || manifest.version !== 1 || !Array.isArray(blocks)) {
+        throw new Error('暂不支持这个 .ldoc 版本。')
+      }
+
+      const libraryId = selectedLibraryId || (activeDoc && !activeDoc.isDraft ? activeDoc.libraryId : inboxLibraryId)
+      const siblingCount = state.docs.filter((doc) => doc.libraryId === libraryId && doc.parentId === null).length
+      const doc: DocNode = {
+        id: uid('doc'),
+        libraryId,
+        parentId: null,
+        title: manifest.title || fallbackTitle.replace(/\.ldoc$/i, '') || '导入文档',
+        emoji: manifest.emoji || '□',
+        isDraft: false,
+        content: cloneBlocks(blocks),
+        sortOrder: siblingCount,
+        createdAt: now(),
+        updatedAt: now(),
+      }
+
+      setSelectedLibraryId(null)
+      setState((current) => ({
+        ...current,
+        docs: [...current.docs, doc],
+        activeDocId: doc.id,
+        openDocIds: [...current.openDocIds.filter((id) => id !== doc.id), doc.id],
+      }))
+    } catch (error) {
+      console.error(error)
+      window.alert(error instanceof Error ? error.message : '导入 .ldoc 失败。')
+    }
+  }
+
+  const importLdocFile = async (file: File | undefined) => {
+    if (!file) return
+    await importLdocData(file, file.name)
+  }
+
+  const chooseAndImportLdoc = async () => {
+    if (!isTauriRuntime()) {
+      ldocImportRef.current?.click()
+      return
+    }
+    try {
+      const path = await open({
+        title: '导入 .ldoc',
+        multiple: false,
+        filters: [{ name: 'Lite Docs', extensions: ['ldoc'] }],
+      })
+      if (!path || Array.isArray(path)) return
+      const data = await readFile(path)
+      await importLdocData(data, path.split(/[\\/]/).at(-1) || '导入文档.ldoc')
+    } catch (error) {
+      console.error(error)
+      window.alert(error instanceof Error ? error.message : '导入 .ldoc 失败。')
+    }
+  }
+
   const saveDocAsTemplate = (docId: string) => {
     const doc = state.docs.find((item) => item.id === docId)
     if (!doc) return
@@ -981,6 +1164,19 @@ function App() {
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索文档"
         />
+        <div className="sidebar-actions">
+          <button type="button" onClick={chooseAndImportLdoc}>导入 .ldoc</button>
+        </div>
+        <input
+          ref={ldocImportRef}
+          type="file"
+          accept=".ldoc,application/x-lite-doc"
+          hidden
+          onChange={(event) => {
+            importLdocFile(event.target.files?.[0])
+            event.currentTarget.value = ''
+          }}
+        />
 
         <section className="open-docs">
           <div className="section-label">已打开</div>
@@ -1143,6 +1339,7 @@ function App() {
                 {activeDoc.isDraft ? (
                   <button type="button" onClick={() => openMoveDialog(activeDoc.id)}>保存到文档库</button>
                 ) : null}
+                <button type="button" onClick={() => exportDocAsLdoc(activeDoc.id)}>导出 .ldoc</button>
                 <button type="button" onClick={() => deleteDoc(activeDoc.id)}>删除</button>
               </div>
             </div>
@@ -1226,6 +1423,7 @@ function App() {
           ) : null}
           <button type="button" onClick={() => openMoveDialog(menuState.docId)}>移动到...</button>
           <button type="button" onClick={() => saveDocAsTemplate(menuState.docId)}>设为模板</button>
+          <button type="button" onClick={() => exportDocAsLdoc(menuState.docId)}>导出 .ldoc</button>
           <button type="button" disabled>导入 Markdown</button>
           <button type="button" disabled>导出 Markdown</button>
           <button type="button" disabled>导出 Word / PDF</button>

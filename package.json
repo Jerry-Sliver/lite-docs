@@ -17,6 +17,9 @@
     "@blocknote/react": "^0.51.4",
     "@blocknote/shadcn": "^0.51.4",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "jszip": "^3.10.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "style-mod": "^4.1.3"
