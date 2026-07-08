@@ -92,6 +92,7 @@ type LdocManifest = {
 
 const STORAGE_KEY = 'light-docs-workspace-v1'
 const INBOX_LIBRARY_ID = 'lib-inbox'
+const INBOX_LIBRARY_TITLE = '我的文档库'
 const LDOC_MIME = 'application/x-lite-doc'
 const isTauriRuntime = () => '__TAURI_INTERNALS__' in window
 
@@ -267,8 +268,8 @@ const seedState: AppState = {
   libraries: [
     {
       id: INBOX_LIBRARY_ID,
-      title: '未归档',
-      description: '系统自动收纳未保存和外部打开的文档。',
+      title: INBOX_LIBRARY_TITLE,
+      description: '系统自动收纳零散文档和外部打开的文档。',
       cover: 'linear-gradient(135deg, #f6e4c5, #c9ad83)',
       hidden: true,
       sortOrder: -1,
@@ -328,8 +329,8 @@ function normalizeLibraries(rawLibraries: Partial<ProjectLibrary>[] | undefined)
   if (rawLibraries?.length) {
     const libraries = rawLibraries.map((library, index) => ({
       id: library.id || uid('lib'),
-      title: library.title || '未命名项目库',
-      description: library.description || '',
+      title: library.hidden ? INBOX_LIBRARY_TITLE : library.title || '未命名项目库',
+      description: library.hidden ? library.description || '系统自动收纳零散文档和外部打开的文档。' : library.description || '',
       cover: library.cover || 'linear-gradient(135deg, #f4e3ca, #caa978)',
       hidden: Boolean(library.hidden),
       sortOrder: typeof library.sortOrder === 'number' ? library.sortOrder : index,
@@ -339,8 +340,8 @@ function normalizeLibraries(rawLibraries: Partial<ProjectLibrary>[] | undefined)
     if (!libraries.some((library) => library.id === INBOX_LIBRARY_ID)) {
       libraries.unshift({
         id: INBOX_LIBRARY_ID,
-        title: '未归档',
-        description: '系统自动收纳未保存和外部打开的文档。',
+        title: INBOX_LIBRARY_TITLE,
+        description: '系统自动收纳零散文档和外部打开的文档。',
         cover: 'linear-gradient(135deg, #f6e4c5, #c9ad83)',
         hidden: true,
         sortOrder: -1,
@@ -354,8 +355,8 @@ function normalizeLibraries(rawLibraries: Partial<ProjectLibrary>[] | undefined)
   return [
     {
       id: INBOX_LIBRARY_ID,
-      title: '未归档',
-      description: '系统自动收纳未保存和外部打开的文档。',
+      title: INBOX_LIBRARY_TITLE,
+      description: '系统自动收纳零散文档和外部打开的文档。',
       cover: 'linear-gradient(135deg, #f4e3ca, #caa978)',
       hidden: true,
       sortOrder: 0,
@@ -526,6 +527,7 @@ function App() {
     () => [...state.libraries].sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, 'zh-CN')),
     [state.libraries],
   )
+  const inboxLibrary = useMemo(() => libraries.find((library) => library.hidden), [libraries])
   const visibleLibraries = useMemo(() => libraries.filter((library) => !library.hidden), [libraries])
   const inboxLibraryId = libraries.find((library) => library.hidden)?.id || INBOX_LIBRARY_ID
 
@@ -1089,7 +1091,7 @@ function App() {
   const deleteLibrary = (libraryId: string) => {
     const library = state.libraries.find((item) => item.id === libraryId)
     if (!library || library.hidden) return
-    const ok = window.confirm(`删除项目库「${library.title}」？里面的文档会移动到未归档，不会被删除。`)
+    const ok = window.confirm(`删除项目库「${library.title}」？里面的文档会移动到${INBOX_LIBRARY_TITLE}，不会被删除。`)
     if (!ok) return
 
     setState((current) => ({
@@ -1133,7 +1135,7 @@ function App() {
   }
 
   const renderLibraryTree = (library: ProjectLibrary) => (
-    <div className="library-tree" key={library.id}>
+    <div className={`library-tree ${library.hidden ? 'inbox-library-tree' : ''}`} key={library.id}>
       <div
         className={`library-row ${selectedLibraryId === library.id ? 'active' : ''}`}
         role="button"
@@ -1151,7 +1153,7 @@ function App() {
         <button
           className="library-manage"
           type="button"
-          title="在项目库根目录新建文档"
+          title={library.hidden ? '在我的文档库根目录新建文档' : '在项目库根目录新建文档'}
           onClick={(event) => {
             event.stopPropagation()
             createRootDocInLibrary(library.id)
@@ -1159,17 +1161,19 @@ function App() {
         >
           +
         </button>
-        <button
-          className="library-manage"
-          type="button"
-          title="管理项目库"
-          onClick={(event) => {
-            event.stopPropagation()
-            openEditLibraryDialog(library)
-          }}
-        >
-          ...
-        </button>
+        {library.hidden ? null : (
+          <button
+            className="library-manage"
+            type="button"
+            title="管理项目库"
+            onClick={(event) => {
+              event.stopPropagation()
+              openEditLibraryDialog(library)
+            }}
+          >
+            ...
+          </button>
+        )}
       </div>
       {renderTreeForLibrary(library.id, null, 1)}
     </div>
@@ -1339,8 +1343,15 @@ function App() {
           </div>
         </section>
 
-        <div className="section-label">文档</div>
-        <nav className="tree">{visibleLibraries.map(renderLibraryTree)}</nav>
+        <div className="section-label">项目库文档</div>
+        <nav className="tree project-tree">{visibleLibraries.map(renderLibraryTree)}</nav>
+
+        <section className="inbox-dock">
+          <div className="section-label">快速归档</div>
+          <nav className="tree inbox-tree">
+            {inboxLibrary ? renderLibraryTree(inboxLibrary) : null}
+          </nav>
+        </section>
       </aside>
 
       <main className="workspace">
@@ -1639,7 +1650,7 @@ function App() {
                     setSelectedMoveParentId(null)
                   }}
                 >
-                  ▤ 未归档
+                  ▤ {INBOX_LIBRARY_TITLE}
                 </button>
                 {visibleLibraries.map((library) => (
                   <button
@@ -1662,7 +1673,7 @@ function App() {
                   onClick={() => setSelectedMoveParentId(null)}
                 >
                   <span>▤</span>
-                  <strong>{libraries.find((library) => library.id === selectedMoveLibraryId)?.title || '未归档'}</strong>
+                  <strong>{libraries.find((library) => library.id === selectedMoveLibraryId)?.title || INBOX_LIBRARY_TITLE}</strong>
                 </button>
                 {renderMoveTree(selectedMoveLibraryId, null)}
               </div>

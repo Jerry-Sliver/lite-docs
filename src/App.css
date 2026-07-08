@@ -163,6 +163,28 @@ button:hover {
   min-height: 0;
 }
 
+.project-tree {
+  flex: 1 1 auto;
+}
+
+.inbox-dock {
+  min-height: 132px;
+  max-height: 34%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.inbox-tree {
+  min-height: 0;
+  background: rgba(255, 250, 241, 0.58);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px;
+}
+
 .tree-group {
   position: relative;
 }
@@ -184,6 +206,10 @@ button:hover {
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
+}
+
+.inbox-library-tree .library-row {
+  grid-template-columns: 22px minmax(0, 1fr) 24px;
 }
 
 .library-row:hover {
