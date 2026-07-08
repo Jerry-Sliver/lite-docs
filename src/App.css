@@ -378,7 +378,7 @@ button:hover {
   min-height: 32px;
   width: 100%;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto 20px;
+  grid-template-columns: 22px minmax(0, 1fr) auto 22px 20px;
   align-items: center;
   gap: 7px;
   padding: 6px 7px 6px 9px;
@@ -398,6 +398,7 @@ button:hover {
   color: #fffaf0;
 }
 
+.tab-more,
 .tab-close {
   width: 18px;
   height: 18px;
@@ -406,6 +407,14 @@ button:hover {
   border-radius: 4px;
   opacity: 0.78;
   justify-self: end;
+}
+
+.tab-more {
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tab-close {
   grid-column: -1;
 }
 
@@ -418,6 +427,7 @@ button:hover {
   padding: 1px 5px;
 }
 
+.tab-more:hover,
 .tab-close:hover {
   background: rgba(255, 255, 255, 0.18);
 }
@@ -599,6 +609,9 @@ button:hover {
 .recent-row small {
   color: var(--muted);
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recent-row.draft small {

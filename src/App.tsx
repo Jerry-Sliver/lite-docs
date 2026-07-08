@@ -19,6 +19,9 @@ type DocNode = {
   description?: string
   cover?: string
   isDraft?: boolean
+  sourcePath?: string
+  sourceName?: string
+  sourceFingerprint?: string
   content: PartialBlock[]
   sortOrder: number
   createdAt: string
@@ -164,6 +167,11 @@ const safeFileName = (value: string) =>
     .join('')
     .replace(/\s+/g, ' ')
     .slice(0, 80)
+
+const getPathFileName = (value: string) => value.split(/[\\/]/).at(-1) || value
+
+const normalizeSourceFingerprint = (value: string) =>
+  value.trim().replace(/\\/g, '/').toLocaleLowerCase()
 
 const extractText = (content: PartialBlock['content']) => {
   if (!content) return ''
@@ -379,6 +387,9 @@ function normalizeDocs(rawDocs: Array<Partial<DocNode> & { type?: string }>, lib
     description: doc.description || '',
     cover: doc.cover || '',
     isDraft: Boolean(doc.isDraft),
+    sourcePath: doc.sourcePath || '',
+    sourceName: doc.sourceName || '',
+    sourceFingerprint: doc.sourceFingerprint || (doc.sourcePath ? normalizeSourceFingerprint(doc.sourcePath) : ''),
     content: doc.content?.length
       ? cloneBlocks(doc.content)
       : [heading(doc.title || '未命名文档', 1), paragraph('')],
@@ -474,7 +485,7 @@ function App() {
   useEffect(() => {
     const close = (event: PointerEvent) => {
       const target = event.target as HTMLElement
-      if (target.closest('.node-menu') || target.closest('.tree-action')) return
+      if (target.closest('.node-menu') || target.closest('.tree-action') || target.closest('.tab-more')) return
       setMenuState(null)
     }
     const onKey = (event: KeyboardEvent) => {
@@ -576,10 +587,18 @@ function App() {
     }, {})
   }, [moveTargets])
 
-  const recentDocs = useMemo(
-    () => [...state.docs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 12),
-    [state.docs],
-  )
+  const recentDocs = useMemo(() => {
+    const seen = new Set<string>()
+    return [...state.docs]
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .filter((doc) => {
+        const key = doc.sourceFingerprint || doc.sourcePath || doc.id
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .slice(0, 12)
+  }, [state.docs])
   const draftDocs = useMemo(() => state.docs.filter((doc) => doc.isDraft), [state.docs])
 
   const updateDoc = (id: string, patch: Partial<DocNode>) => {
@@ -617,7 +636,7 @@ function App() {
   const openNodeMenu = (docId: string, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
     const menuWidth = 180
-    const menuHeight = 292
+    const menuHeight = 366
     const bottomReserve = 68
     const spaceBelow = window.innerHeight - rect.bottom - bottomReserve
     const placement = spaceBelow < menuHeight ? 'top' : 'bottom'
@@ -712,6 +731,9 @@ function App() {
       ...source,
       id: uid('doc'),
       title: `${source.title} 副本`,
+      sourcePath: '',
+      sourceName: '',
+      sourceFingerprint: '',
       content: cloneBlocks(source.content),
       sortOrder: siblingCount,
       createdAt: now(),
@@ -853,7 +875,7 @@ function App() {
     setMenuState(null)
   }
 
-  const importLdocData = async (data: Blob | Uint8Array, fallbackTitle: string) => {
+  const importLdocData = async (data: Blob | Uint8Array, fallbackTitle: string, sourcePath = '') => {
     try {
       const zip = await JSZip.loadAsync(data)
       const mimetype = (await zip.file('mimetype')?.async('string'))?.trim()
@@ -869,15 +891,54 @@ function App() {
         throw new Error('暂不支持这个 .ldoc 版本。')
       }
 
-      const libraryId = selectedLibraryId || (activeDoc && !activeDoc.isDraft ? activeDoc.libraryId : inboxLibraryId)
+      const sourceName = sourcePath ? getPathFileName(sourcePath) : fallbackTitle
+      const sourceFingerprint = sourcePath
+        ? normalizeSourceFingerprint(sourcePath)
+        : normalizeSourceFingerprint(`${manifest.id || ''}:${sourceName}`)
+      const title = manifest.title || sourceName.replace(/\.ldoc$/i, '') || '导入文档'
+      const emoji = manifest.emoji || '□'
+      const existingDoc = sourceFingerprint
+        ? state.docs.find((doc) => doc.sourceFingerprint === sourceFingerprint)
+        : undefined
+
+      if (existingDoc) {
+        setSelectedLibraryId(null)
+        setState((current) => ({
+          ...current,
+          docs: current.docs.map((doc) =>
+            doc.id === existingDoc.id
+              ? {
+                  ...doc,
+                  title,
+                  emoji,
+                  content: cloneBlocks(blocks),
+                  sourcePath: sourcePath || doc.sourcePath,
+                  sourceName,
+                  sourceFingerprint,
+                  updatedAt: now(),
+                }
+              : doc,
+          ),
+          activeDocId: existingDoc.id,
+          openDocIds: current.openDocIds.includes(existingDoc.id)
+            ? current.openDocIds
+            : [...current.openDocIds, existingDoc.id],
+        }))
+        return
+      }
+
+      const libraryId = inboxLibraryId
       const siblingCount = state.docs.filter((doc) => doc.libraryId === libraryId && doc.parentId === null).length
       const doc: DocNode = {
         id: uid('doc'),
         libraryId,
         parentId: null,
-        title: manifest.title || fallbackTitle.replace(/\.ldoc$/i, '') || '导入文档',
-        emoji: manifest.emoji || '□',
-        isDraft: false,
+        title,
+        emoji,
+        isDraft: true,
+        sourcePath,
+        sourceName,
+        sourceFingerprint,
         content: cloneBlocks(blocks),
         sortOrder: siblingCount,
         createdAt: now(),
@@ -915,7 +976,7 @@ function App() {
       })
       if (!path || Array.isArray(path)) return
       const data = await readFile(path)
-      await importLdocData(data, path.split(/[\\/]/).at(-1) || '导入文档.ldoc')
+      await importLdocData(data, getPathFileName(path) || '导入文档.ldoc', path)
     } catch (error) {
       console.error(error)
       window.alert(error instanceof Error ? error.message : '导入 .ldoc 失败。')
@@ -925,7 +986,7 @@ function App() {
   const importLdocPath = async (path: string) => {
     try {
       const data = await invoke<number[]>('read_ldoc_file', { path })
-      await importLdocData(new Uint8Array(data), path.split(/[\\/]/).at(-1) || '导入文档.ldoc')
+      await importLdocData(new Uint8Array(data), getPathFileName(path) || '导入文档.ldoc', path)
     } catch (error) {
       console.error(error)
       window.alert(error instanceof Error ? error.message : '打开 .ldoc 失败。')
@@ -1252,6 +1313,17 @@ function App() {
                   </span>
                 ) : null}
                 <span
+                  className="tab-more"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    openNodeMenu(doc.id, event.currentTarget)
+                  }}
+                >
+                  ...
+                </span>
+                <span
                   className="tab-close"
                   role="button"
                   tabIndex={0}
@@ -1359,7 +1431,7 @@ function App() {
                   <button className="recent-row" type="button" key={doc.id} onClick={() => openDoc(doc.id)}>
                     <span>{doc.emoji}</span>
                     <strong>{doc.title}</strong>
-                    <small>{formatTime(doc.updatedAt)}</small>
+                    <small title={doc.sourcePath || undefined}>{doc.sourcePath || formatTime(doc.updatedAt)}</small>
                   </button>
                 ))}
               </div>
