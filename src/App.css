@@ -709,6 +709,34 @@ button:hover {
   background: transparent;
 }
 
+.editor-card [data-content-type=codeBlock],
+.editor-card .bn-block-content[data-content-type=codeBlock] {
+  background: #f3e3c9;
+  border: 1px solid #d7bd94;
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 250, 241, 0.72);
+}
+
+.editor-card [data-content-type=codeBlock] pre,
+.editor-card [data-content-type=codeBlock] code,
+.editor-card .bn-block-content[data-content-type=codeBlock] pre,
+.editor-card .bn-block-content[data-content-type=codeBlock] code {
+  background: transparent !important;
+  color: #3b2a1f;
+  font-family:
+    "JetBrains Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.editor-card [data-content-type=codeBlock] pre,
+.editor-card .bn-block-content[data-content-type=codeBlock] pre {
+  margin: 0;
+  padding: 14px 16px;
+}
+
 .panel {
   background: #fff8ec;
   border: 1px solid var(--line);

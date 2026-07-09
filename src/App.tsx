@@ -205,8 +205,15 @@ const blocksToPreviewMarkdown = (blocks: PartialBlock[]) =>
     .filter(Boolean)
     .join('\n\n')
 
-const fenceLinePattern = /^```([a-zA-Z0-9_+#.-]*)\s*$/
-const closingFencePattern = /^```\s*$/
+const normalizeFenceText = (text: string) =>
+  text.replace(/\u200B|\u200C|\u200D|\uFEFF/g, '').replace(/｀/g, '`').trim()
+
+const getFenceLanguage = (text: string) => {
+  const match = normalizeFenceText(text).match(/^```([a-zA-Z0-9_+#.-]*)$/)
+  return match ? match[1] || 'text' : null
+}
+
+const isClosingFence = (text: string) => normalizeFenceText(text) === '```'
 
 const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
   const blocks: PartialBlock[] = []
@@ -220,8 +227,8 @@ const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
   }
 
   for (let index = 0; index < lines.length; index += 1) {
-    const openMatch = lines[index].match(fenceLinePattern)
-    if (!openMatch) {
+    const language = getFenceLanguage(lines[index])
+    if (!language) {
       paragraphLines.push(lines[index])
       continue
     }
@@ -229,7 +236,7 @@ const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
     const codeLines: string[] = []
     let closeIndex = -1
     for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      if (closingFencePattern.test(lines[cursor])) {
+      if (isClosingFence(lines[cursor])) {
         closeIndex = cursor
         break
       }
@@ -244,7 +251,7 @@ const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
     flushParagraph()
     blocks.push({
       type: 'codeBlock',
-      props: { language: openMatch[1] || 'text' },
+      props: { language },
       content: codeLines.join('\n'),
     })
     index = closeIndex
@@ -502,42 +509,64 @@ function EditorCanvas({
   useEffect(() => {
     const convertExistingFences = () => {
       const blocks = editor.document
+      const nextBlocks: PartialBlock[] = []
+      let changed = false
+
       for (let index = 0; index < blocks.length; index += 1) {
         const block = blocks[index]
-        if (block.type !== 'paragraph') continue
-      const text = extractText(block.content)
-      const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
-        if (fenceBlockMatch) {
-          editor.replaceBlocks([block], [{
-            type: 'codeBlock',
-            props: { language: fenceBlockMatch[1] || 'text' },
-            content: fenceBlockMatch[2],
-          }])
-          return true
+        if (block.type !== 'paragraph') {
+          nextBlocks.push(block)
+          continue
         }
 
-        const openMatch = text.match(fenceLinePattern)
-        if (!openMatch) continue
+        const text = extractText(block.content)
+        const singleBlockFence = text.match(/^\s*(```|｀｀｀)([a-zA-Z0-9_+#.-]*)\s*\n([\s\S]*?)\n\s*(?:```|｀｀｀)\s*$/)
+        if (singleBlockFence) {
+          nextBlocks.push({
+            type: 'codeBlock',
+            props: { language: singleBlockFence[2] || 'text' },
+            content: singleBlockFence[3],
+          })
+          changed = true
+          continue
+        }
+
+        const language = getFenceLanguage(text)
+        if (!language) {
+          nextBlocks.push(block)
+          continue
+        }
 
         const codeLines: string[] = []
-        const blocksToReplace = [block]
+        let closeIndex = -1
         for (let cursor = index + 1; cursor < blocks.length; cursor += 1) {
           const nextBlock = blocks[cursor]
           if (nextBlock.type !== 'paragraph') break
           const nextText = extractText(nextBlock.content)
-          blocksToReplace.push(nextBlock)
-          if (closingFencePattern.test(nextText)) {
-            editor.replaceBlocks(blocksToReplace, [{
-              type: 'codeBlock',
-              props: { language: openMatch[1] || 'text' },
-              content: codeLines.join('\n'),
-            }])
-            return true
+          if (isClosingFence(nextText)) {
+            closeIndex = cursor
+            break
           }
           codeLines.push(nextText)
         }
+
+        if (closeIndex < 0) {
+          nextBlocks.push(block)
+          continue
+        }
+
+        nextBlocks.push({
+          type: 'codeBlock',
+          props: { language },
+          content: codeLines.join('\n'),
+        })
+        changed = true
+        index = closeIndex
       }
-      return false
+
+      if (!changed) return false
+      editor.replaceBlocks(blocks, nextBlocks)
+      return true
     }
 
     convertExistingFences()
@@ -579,8 +608,8 @@ function EditorCanvas({
       for (let index = 0; index < editor.document.length; index += 1) {
         const block = editor.document[index]
         if (block.type !== 'paragraph') continue
-        const openMatch = extractText(block.content).match(fenceLinePattern)
-        if (!openMatch) continue
+        const language = getFenceLanguage(extractText(block.content))
+        if (!language) continue
 
         const codeLines: string[] = []
         const blocksToReplace = [block]
@@ -589,10 +618,10 @@ function EditorCanvas({
           if (nextBlock.type !== 'paragraph') break
           const nextText = extractText(nextBlock.content)
           blocksToReplace.push(nextBlock)
-          if (closingFencePattern.test(nextText)) {
+          if (isClosingFence(nextText)) {
             const { insertedBlocks } = editor.replaceBlocks(blocksToReplace, [{
               type: 'codeBlock',
-              props: { language: openMatch[1] || 'text' },
+              props: { language },
               content: codeLines.join('\n'),
             }])
             if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'end')
@@ -604,23 +633,23 @@ function EditorCanvas({
 
       const { block } = editor.getTextCursorPosition()
       const text = extractText(block.content)
-      const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
+      const fenceBlockMatch = text.match(/^\s*(```|｀｀｀)([a-zA-Z0-9_+#.-]*)\s*\n([\s\S]*?)\n\s*(?:```|｀｀｀)\s*$/)
       if (block.type === 'paragraph' && fenceBlockMatch) {
         const { insertedBlocks } = editor.replaceBlocks([block], [{
           type: 'codeBlock',
-          props: { language: fenceBlockMatch[1] || 'text' },
-          content: fenceBlockMatch[2],
+          props: { language: fenceBlockMatch[2] || 'text' },
+          content: fenceBlockMatch[3],
         }])
         if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'end')
         return true
       }
 
-      const fenceMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)$/)
-      if (block.type !== 'paragraph' || !fenceMatch) return false
+      const language = getFenceLanguage(text)
+      if (block.type !== 'paragraph' || !language) return false
 
       const { insertedBlocks } = editor.replaceBlocks([block], [{
         type: 'codeBlock',
-        props: { language: fenceMatch[1] || 'text' },
+        props: { language },
         content: '',
       }])
       if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'start')
