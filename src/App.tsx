@@ -205,106 +205,6 @@ const blocksToPreviewMarkdown = (blocks: PartialBlock[]) =>
     .filter(Boolean)
     .join('\n\n')
 
-const normalizeFenceText = (text: string) =>
-  text.replace(/\u200B|\u200C|\u200D|\uFEFF/g, '').replace(/｀/g, '`').trim()
-
-const getFenceLanguage = (text: string) => {
-  const match = normalizeFenceText(text).match(/^```([a-zA-Z0-9_+#.-]*)$/)
-  return match ? match[1] || 'text' : null
-}
-
-const isClosingFence = (text: string) => normalizeFenceText(text) === '```'
-
-const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
-  const blocks: PartialBlock[] = []
-  const lines = text.replace(/\r\n/g, '\n').split('\n')
-  let paragraphLines: string[] = []
-
-  const flushParagraph = () => {
-    if (paragraphLines.length === 0) return
-    blocks.push(paragraph(paragraphLines.join('\n').trimEnd()))
-    paragraphLines = []
-  }
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const language = getFenceLanguage(lines[index])
-    if (!language) {
-      paragraphLines.push(lines[index])
-      continue
-    }
-
-    const codeLines: string[] = []
-    let closeIndex = -1
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      if (isClosingFence(lines[cursor])) {
-        closeIndex = cursor
-        break
-      }
-      codeLines.push(lines[cursor])
-    }
-
-    if (closeIndex < 0) {
-      paragraphLines.push(lines[index])
-      continue
-    }
-
-    flushParagraph()
-    blocks.push({
-      type: 'codeBlock',
-      props: { language },
-      content: codeLines.join('\n'),
-    })
-    index = closeIndex
-  }
-
-  flushParagraph()
-  return blocks.length ? blocks : [paragraph(text)]
-}
-
-const isTextLikeBlock = (block: PartialBlock) =>
-  block.type !== 'codeBlock' && typeof extractText(block.content) === 'string'
-
-const textHasFence = (text: string) =>
-  text.includes('```') || text.includes('｀｀｀')
-
-const parseTextRunsWithFences = (blocks: PartialBlock[]) => {
-  const nextBlocks: PartialBlock[] = []
-  let changed = false
-
-  for (let index = 0; index < blocks.length; index += 1) {
-    const block = blocks[index]
-    if (!isTextLikeBlock(block)) {
-      nextBlocks.push(block)
-      continue
-    }
-
-    const run: PartialBlock[] = []
-    let cursor = index
-    while (cursor < blocks.length && isTextLikeBlock(blocks[cursor])) {
-      run.push(blocks[cursor])
-      cursor += 1
-    }
-
-    const runText = run.map((item) => extractText(item.content)).join('\n')
-    if (!textHasFence(runText)) {
-      nextBlocks.push(...run)
-      index = cursor - 1
-      continue
-    }
-
-    const parsedRun = parseFencedMarkdownBlocks(runText)
-    if (parsedRun.some((item) => item.type === 'codeBlock')) {
-      nextBlocks.push(...parsedRun)
-      changed = true
-    } else {
-      nextBlocks.push(...run)
-    }
-    index = cursor - 1
-  }
-
-  return { blocks: nextBlocks, changed }
-}
-
 const templates: Template[] = [
   {
     id: 'blank',
@@ -551,54 +451,7 @@ function EditorCanvas({
   })
 
   useEffect(() => {
-    const convertExistingFences = () => {
-      const { blocks, changed } = parseTextRunsWithFences(editor.document)
-      if (!changed) return false
-      editor.replaceBlocks(editor.document, blocks)
-      return true
-    }
-
-    convertExistingFences()
-  }, [editor])
-
-  useEffect(() => {
     const root = editor.prosemirrorView.dom
-
-    const syncCodeCopyButtons = () => {
-      root
-        .querySelectorAll<HTMLElement>('[data-content-type=codeBlock], .bn-block-content[data-content-type=codeBlock]')
-        .forEach((block) => {
-          if (block.querySelector('.code-copy-button')) return
-          const button = document.createElement('button')
-          button.type = 'button'
-          button.className = 'code-copy-button'
-          button.contentEditable = 'false'
-          button.title = '复制代码'
-          button.setAttribute('aria-label', '复制代码')
-          button.textContent = '⧉'
-          block.append(button)
-        })
-    }
-
-    const handleCodeCopyClick = (event: MouseEvent) => {
-      const target = event.target
-      if (!(target instanceof HTMLElement)) return
-      const button = target.closest<HTMLButtonElement>('.code-copy-button')
-      if (!button) return
-
-      const block = button.closest<HTMLElement>('[data-content-type=codeBlock], .bn-block-content[data-content-type=codeBlock]')
-      const codeText = block?.querySelector<HTMLElement>('pre, code')?.innerText || ''
-      if (!codeText) return
-
-      event.preventDefault()
-      event.stopPropagation()
-      void navigator.clipboard.writeText(codeText).then(() => {
-        button.textContent = '✓'
-        window.setTimeout(() => {
-          button.textContent = '⧉'
-        }, 900)
-      })
-    }
 
     const getCell = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return null
@@ -629,40 +482,6 @@ function EditorCanvas({
       return true
     }
 
-    const convertFenceToCodeBlock = () => {
-      const parsedDocument = parseTextRunsWithFences(editor.document)
-      if (parsedDocument.changed) {
-        const { insertedBlocks } = editor.replaceBlocks(editor.document, parsedDocument.blocks)
-        const lastCodeBlock = [...insertedBlocks].reverse().find((item) => item.type === 'codeBlock')
-        if (lastCodeBlock) editor.setTextCursorPosition(lastCodeBlock, 'end')
-        return true
-      }
-
-      const { block } = editor.getTextCursorPosition()
-      const text = extractText(block.content)
-      const fenceBlockMatch = text.match(/^\s*(```|｀｀｀)([a-zA-Z0-9_+#.-]*)\s*\n([\s\S]*?)\n\s*(?:```|｀｀｀)\s*$/)
-      if (block.type === 'paragraph' && fenceBlockMatch) {
-        const { insertedBlocks } = editor.replaceBlocks([block], [{
-          type: 'codeBlock',
-          props: { language: fenceBlockMatch[2] || 'text' },
-          content: fenceBlockMatch[3],
-        }])
-        if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'end')
-        return true
-      }
-
-      const language = getFenceLanguage(text)
-      if (block.type !== 'paragraph' || !language) return false
-
-      const { insertedBlocks } = editor.replaceBlocks([block], [{
-        type: 'codeBlock',
-        props: { language },
-        content: '',
-      }])
-      if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'start')
-      return true
-    }
-
     const handleKeyDown = (event: KeyboardEvent) => {
       const targetCell = getCell(event.target) || getCursorCell()
 
@@ -677,47 +496,12 @@ function EditorCanvas({
         }
         return
       }
-
-      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || targetCell) {
-        return
-      }
-
-      if (convertFenceToCodeBlock()) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
-    }
-
-    const handlePaste = (event: ClipboardEvent) => {
-      const text = event.clipboardData?.getData('text/plain') || ''
-      if (!text.includes('```')) return
-
-      event.preventDefault()
-      const blocks = parseFencedMarkdownBlocks(text)
-      if (!blocks.length) return
-
-      const { block } = editor.getTextCursorPosition()
-      if (block.type === 'paragraph' && extractText(block.content).trim() === '') {
-        const { insertedBlocks } = editor.replaceBlocks([block], blocks)
-        if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'start')
-        return
-      }
-      const insertedBlocks = editor.insertBlocks(blocks, block, 'after')
-      if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'start')
     }
 
     root.addEventListener('keydown', handleKeyDown, true)
-    root.addEventListener('paste', handlePaste, true)
-    root.addEventListener('click', handleCodeCopyClick, true)
-    const observer = new MutationObserver(syncCodeCopyButtons)
-    syncCodeCopyButtons()
-    observer.observe(root, { childList: true, subtree: true })
 
     return () => {
       root.removeEventListener('keydown', handleKeyDown, true)
-      root.removeEventListener('paste', handlePaste, true)
-      root.removeEventListener('click', handleCodeCopyClick, true)
-      observer.disconnect()
     }
   }, [editor])
 
