@@ -261,26 +261,32 @@ const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
   return blocks.length ? blocks : [paragraph(text)]
 }
 
-const parseParagraphRunsWithFences = (blocks: PartialBlock[]) => {
+const isTextLikeBlock = (block: PartialBlock) =>
+  block.type !== 'codeBlock' && typeof extractText(block.content) === 'string'
+
+const textHasFence = (text: string) =>
+  text.includes('```') || text.includes('｀｀｀')
+
+const parseTextRunsWithFences = (blocks: PartialBlock[]) => {
   const nextBlocks: PartialBlock[] = []
   let changed = false
 
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index]
-    if (block.type !== 'paragraph') {
+    if (!isTextLikeBlock(block)) {
       nextBlocks.push(block)
       continue
     }
 
     const run: PartialBlock[] = []
     let cursor = index
-    while (cursor < blocks.length && blocks[cursor].type === 'paragraph') {
+    while (cursor < blocks.length && isTextLikeBlock(blocks[cursor])) {
       run.push(blocks[cursor])
       cursor += 1
     }
 
     const runText = run.map((item) => extractText(item.content)).join('\n')
-    if (!runText.includes('```') && !runText.includes('｀｀｀')) {
+    if (!textHasFence(runText)) {
       nextBlocks.push(...run)
       index = cursor - 1
       continue
@@ -546,7 +552,7 @@ function EditorCanvas({
 
   useEffect(() => {
     const convertExistingFences = () => {
-      const { blocks, changed } = parseParagraphRunsWithFences(editor.document)
+      const { blocks, changed } = parseTextRunsWithFences(editor.document)
       if (!changed) return false
       editor.replaceBlocks(editor.document, blocks)
       return true
@@ -557,6 +563,42 @@ function EditorCanvas({
 
   useEffect(() => {
     const root = editor.prosemirrorView.dom
+
+    const syncCodeCopyButtons = () => {
+      root
+        .querySelectorAll<HTMLElement>('[data-content-type=codeBlock], .bn-block-content[data-content-type=codeBlock]')
+        .forEach((block) => {
+          if (block.querySelector('.code-copy-button')) return
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'code-copy-button'
+          button.contentEditable = 'false'
+          button.title = '复制代码'
+          button.setAttribute('aria-label', '复制代码')
+          button.textContent = '⧉'
+          block.append(button)
+        })
+    }
+
+    const handleCodeCopyClick = (event: MouseEvent) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      const button = target.closest<HTMLButtonElement>('.code-copy-button')
+      if (!button) return
+
+      const block = button.closest<HTMLElement>('[data-content-type=codeBlock], .bn-block-content[data-content-type=codeBlock]')
+      const codeText = block?.querySelector<HTMLElement>('pre, code')?.innerText || ''
+      if (!codeText) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void navigator.clipboard.writeText(codeText).then(() => {
+        button.textContent = '✓'
+        window.setTimeout(() => {
+          button.textContent = '⧉'
+        }, 900)
+      })
+    }
 
     const getCell = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return null
@@ -588,7 +630,7 @@ function EditorCanvas({
     }
 
     const convertFenceToCodeBlock = () => {
-      const parsedDocument = parseParagraphRunsWithFences(editor.document)
+      const parsedDocument = parseTextRunsWithFences(editor.document)
       if (parsedDocument.changed) {
         const { insertedBlocks } = editor.replaceBlocks(editor.document, parsedDocument.blocks)
         const lastCodeBlock = [...insertedBlocks].reverse().find((item) => item.type === 'codeBlock')
@@ -666,10 +708,16 @@ function EditorCanvas({
 
     root.addEventListener('keydown', handleKeyDown, true)
     root.addEventListener('paste', handlePaste, true)
+    root.addEventListener('click', handleCodeCopyClick, true)
+    const observer = new MutationObserver(syncCodeCopyButtons)
+    syncCodeCopyButtons()
+    observer.observe(root, { childList: true, subtree: true })
 
     return () => {
       root.removeEventListener('keydown', handleKeyDown, true)
       root.removeEventListener('paste', handlePaste, true)
+      root.removeEventListener('click', handleCodeCopyClick, true)
+      observer.disconnect()
     }
   }, [editor])
 
