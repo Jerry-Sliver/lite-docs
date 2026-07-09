@@ -205,6 +205,55 @@ const blocksToPreviewMarkdown = (blocks: PartialBlock[]) =>
     .filter(Boolean)
     .join('\n\n')
 
+const fenceLinePattern = /^```([a-zA-Z0-9_+#.-]*)\s*$/
+const closingFencePattern = /^```\s*$/
+
+const parseFencedMarkdownBlocks = (text: string): PartialBlock[] => {
+  const blocks: PartialBlock[] = []
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  let paragraphLines: string[] = []
+
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) return
+    blocks.push(paragraph(paragraphLines.join('\n').trimEnd()))
+    paragraphLines = []
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const openMatch = lines[index].match(fenceLinePattern)
+    if (!openMatch) {
+      paragraphLines.push(lines[index])
+      continue
+    }
+
+    const codeLines: string[] = []
+    let closeIndex = -1
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      if (closingFencePattern.test(lines[cursor])) {
+        closeIndex = cursor
+        break
+      }
+      codeLines.push(lines[cursor])
+    }
+
+    if (closeIndex < 0) {
+      paragraphLines.push(lines[index])
+      continue
+    }
+
+    flushParagraph()
+    blocks.push({
+      type: 'codeBlock',
+      props: { language: openMatch[1] || 'text' },
+      content: codeLines.join('\n'),
+    })
+    index = closeIndex
+  }
+
+  flushParagraph()
+  return blocks.length ? blocks : [paragraph(text)]
+}
+
 const templates: Template[] = [
   {
     id: 'blank',
@@ -451,18 +500,47 @@ function EditorCanvas({
   })
 
   useEffect(() => {
-    editor.document.forEach((block) => {
-      if (block.type !== 'paragraph') return
+    const convertExistingFences = () => {
+      const blocks = editor.document
+      for (let index = 0; index < blocks.length; index += 1) {
+        const block = blocks[index]
+        if (block.type !== 'paragraph') continue
       const text = extractText(block.content)
       const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
-      if (!fenceBlockMatch) return
+        if (fenceBlockMatch) {
+          editor.replaceBlocks([block], [{
+            type: 'codeBlock',
+            props: { language: fenceBlockMatch[1] || 'text' },
+            content: fenceBlockMatch[2],
+          }])
+          return true
+        }
 
-      editor.replaceBlocks([block], [{
-        type: 'codeBlock',
-        props: { language: fenceBlockMatch[1] || 'text' },
-        content: fenceBlockMatch[2],
-      }])
-    })
+        const openMatch = text.match(fenceLinePattern)
+        if (!openMatch) continue
+
+        const codeLines: string[] = []
+        const blocksToReplace = [block]
+        for (let cursor = index + 1; cursor < blocks.length; cursor += 1) {
+          const nextBlock = blocks[cursor]
+          if (nextBlock.type !== 'paragraph') break
+          const nextText = extractText(nextBlock.content)
+          blocksToReplace.push(nextBlock)
+          if (closingFencePattern.test(nextText)) {
+            editor.replaceBlocks(blocksToReplace, [{
+              type: 'codeBlock',
+              props: { language: openMatch[1] || 'text' },
+              content: codeLines.join('\n'),
+            }])
+            return true
+          }
+          codeLines.push(nextText)
+        }
+      }
+      return false
+    }
+
+    convertExistingFences()
   }, [editor])
 
   useEffect(() => {
@@ -475,15 +553,55 @@ function EditorCanvas({
       return cell
     }
 
-    const insertHardBreak = () => {
+    const getCursorCell = () => {
+      const { from } = editor.prosemirrorView.state.selection
+      const domAtPos = editor.prosemirrorView.domAtPos(from)
+      const element = domAtPos.node instanceof HTMLElement
+        ? domAtPos.node
+        : domAtPos.node.parentElement
+      const cell = element?.closest<HTMLTableCellElement>('td, th') || null
+      return cell && root.contains(cell) ? cell : null
+    }
+
+    const insertTableCellBreak = () => {
       const { state, dispatch } = editor.prosemirrorView
       const hardBreak = state.schema.nodes.hardBreak
-      if (!hardBreak) return false
-      dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView())
+      const { $from } = state.selection
+      if (hardBreak && $from.parent.canReplaceWith($from.index(), $from.index(), hardBreak)) {
+        dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView())
+        return true
+      }
+      dispatch(state.tr.insertText('\n').scrollIntoView())
       return true
     }
 
     const convertFenceToCodeBlock = () => {
+      for (let index = 0; index < editor.document.length; index += 1) {
+        const block = editor.document[index]
+        if (block.type !== 'paragraph') continue
+        const openMatch = extractText(block.content).match(fenceLinePattern)
+        if (!openMatch) continue
+
+        const codeLines: string[] = []
+        const blocksToReplace = [block]
+        for (let cursor = index + 1; cursor < editor.document.length; cursor += 1) {
+          const nextBlock = editor.document[cursor]
+          if (nextBlock.type !== 'paragraph') break
+          const nextText = extractText(nextBlock.content)
+          blocksToReplace.push(nextBlock)
+          if (closingFencePattern.test(nextText)) {
+            const { insertedBlocks } = editor.replaceBlocks(blocksToReplace, [{
+              type: 'codeBlock',
+              props: { language: openMatch[1] || 'text' },
+              content: codeLines.join('\n'),
+            }])
+            if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'end')
+            return true
+          }
+          codeLines.push(nextText)
+        }
+      }
+
       const { block } = editor.getTextCursorPosition()
       const text = extractText(block.content)
       const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
@@ -510,14 +628,14 @@ function EditorCanvas({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      const targetCell = getCell(event.target)
+      const targetCell = getCell(event.target) || getCursorCell()
 
       if (event.key === 'Escape') {
         return
       }
 
       if (event.key === 'Enter' && targetCell) {
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && insertHardBreak()) {
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && insertTableCellBreak()) {
           event.preventDefault()
           event.stopPropagation()
         }
@@ -539,7 +657,7 @@ function EditorCanvas({
       if (!text.includes('```')) return
 
       event.preventDefault()
-      const blocks = editor.tryParseMarkdownToBlocks(text)
+      const blocks = parseFencedMarkdownBlocks(text)
       if (!blocks.length) return
 
       const { block } = editor.getTextCursorPosition()
