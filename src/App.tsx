@@ -446,15 +446,24 @@ function EditorCanvas({
   doc: DocNode
   onChange: (blocks: PartialBlock[]) => void
 }) {
-  const selectedTableCellsRef = useRef<HTMLTableCellElement[]>([])
-  const activePreviewTableRef = useRef<HTMLTableElement | null>(null)
-  const editingTableRef = useRef<HTMLTableElement | null>(null)
-  const lastSelectedCellRef = useRef<HTMLTableCellElement | null>(null)
-  const dragAnchorCellRef = useRef<HTMLTableCellElement | null>(null)
-  const isDraggingTableSelectionRef = useRef(false)
   const editor = useCreateBlockNote({
     initialContent: doc.content?.length ? cloneBlocks(doc.content) : [paragraph('')],
   })
+
+  useEffect(() => {
+    editor.document.forEach((block) => {
+      if (block.type !== 'paragraph') return
+      const text = extractText(block.content)
+      const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
+      if (!fenceBlockMatch) return
+
+      editor.replaceBlocks([block], [{
+        type: 'codeBlock',
+        props: { language: fenceBlockMatch[1] || 'text' },
+        content: fenceBlockMatch[2],
+      }])
+    })
+  }, [editor])
 
   useEffect(() => {
     const root = editor.prosemirrorView.dom
@@ -464,146 +473,6 @@ function EditorCanvas({
       const cell = target.closest<HTMLTableCellElement>('td, th')
       if (!cell || !root.contains(cell)) return null
       return cell
-    }
-
-    const getTable = (cell: HTMLTableCellElement | null) => cell?.closest<HTMLTableElement>('table') || null
-
-    const clearSelectedCells = () => {
-      selectedTableCellsRef.current.forEach((cell) => cell.classList.remove('ld-table-cell-selected'))
-      selectedTableCellsRef.current = []
-      lastSelectedCellRef.current = null
-      activePreviewTableRef.current?.classList.remove('ld-table-preview-active')
-      activePreviewTableRef.current = null
-    }
-
-    const exitTableEditMode = () => {
-      editingTableRef.current?.classList.remove('ld-table-edit-active')
-      editingTableRef.current = null
-    }
-
-    const enterTableEditMode = (table: HTMLTableElement) => {
-      clearSelectedCells()
-      editingTableRef.current?.classList.remove('ld-table-edit-active')
-      editingTableRef.current = table
-      table.classList.add('ld-table-edit-active')
-      editor.prosemirrorView.focus()
-    }
-
-    const selectCells = (cells: HTMLTableCellElement[]) => {
-      const table = getTable(cells[0])
-      if (!table) {
-        clearSelectedCells()
-        return
-      }
-
-      selectedTableCellsRef.current.forEach((cell) => cell.classList.remove('ld-table-cell-selected'))
-      activePreviewTableRef.current?.classList.remove('ld-table-preview-active')
-
-      activePreviewTableRef.current = table
-      table.classList.add('ld-table-preview-active')
-      selectedTableCellsRef.current = cells
-      cells.forEach((cell) => cell.classList.add('ld-table-cell-selected'))
-      lastSelectedCellRef.current = cells.at(-1) || null
-    }
-
-    const selectCellRange = (fromCell: HTMLTableCellElement, toCell: HTMLTableCellElement) => {
-      const table = getTable(toCell)
-      if (!table || getTable(fromCell) !== table) {
-        selectCells([toCell])
-        return
-      }
-
-      const rows = Array.from(table.rows)
-      const fromRow = fromCell.parentElement instanceof HTMLTableRowElement ? rows.indexOf(fromCell.parentElement) : -1
-      const toRow = toCell.parentElement instanceof HTMLTableRowElement ? rows.indexOf(toCell.parentElement) : -1
-      const fromCol = fromCell.cellIndex
-      const toCol = toCell.cellIndex
-
-      if (fromRow < 0 || toRow < 0 || fromCol < 0 || toCol < 0) {
-        selectCells([toCell])
-        return
-      }
-
-      const rowStart = Math.min(fromRow, toRow)
-      const rowEnd = Math.max(fromRow, toRow)
-      const colStart = Math.min(fromCol, toCol)
-      const colEnd = Math.max(fromCol, toCol)
-      const cells = rows
-        .slice(rowStart, rowEnd + 1)
-        .flatMap((row) => Array.from(row.cells).slice(colStart, colEnd + 1))
-
-      selectCells(cells)
-    }
-
-    const addCellToSelection = (cell: HTMLTableCellElement) => {
-      const current = selectedTableCellsRef.current
-      const table = getTable(cell)
-      if (!table || activePreviewTableRef.current !== table) {
-        selectCells([cell])
-        return
-      }
-      if (current.includes(cell)) {
-        selectCells(current.filter((selectedCell) => selectedCell !== cell))
-        return
-      }
-      selectCells([...current, cell])
-    }
-
-    const getSelectedCellText = () =>
-      selectedTableCellsRef.current
-        .map((cell) => cell.innerText.replace(/\n+$/g, '').trimEnd())
-        .join('\n')
-
-    const clearSelectedCellContent = () => {
-      const table = activePreviewTableRef.current
-      const blockId = table?.closest<HTMLElement>('[data-id]')?.dataset.id
-      const tableBlock = blockId
-        ? editor.document.find((block) => block.id === blockId && block.type === 'table')
-        : undefined
-
-      if (table && tableBlock?.content && typeof tableBlock.content === 'object' && 'rows' in tableBlock.content) {
-        const rows = Array.from(table.rows)
-        const selectedCoordinates = selectedTableCellsRef.current
-          .map((cell) => ({
-            row: cell.parentElement instanceof HTMLTableRowElement ? rows.indexOf(cell.parentElement) : -1,
-            col: cell.cellIndex,
-          }))
-          .filter((coordinate) => coordinate.row >= 0 && coordinate.col >= 0)
-
-        const content = cloneBlocks([tableBlock as PartialBlock])[0].content as {
-          rows: { cells: unknown[] }[]
-        }
-        selectedCoordinates.forEach(({ row, col }) => {
-          const cell = content.rows[row]?.cells[col]
-          if (!cell) return
-          if (Array.isArray(cell)) {
-            content.rows[row].cells[col] = []
-            return
-          }
-          if (typeof cell === 'object') {
-            content.rows[row].cells[col] = { ...cell, content: [] }
-          }
-        })
-        editor.updateBlock(tableBlock, { content } as PartialBlock)
-        return
-      }
-
-      selectedTableCellsRef.current.forEach((cell) => {
-        const paragraphs = Array.from(cell.querySelectorAll('p'))
-        if (paragraphs.length > 0) {
-          paragraphs.forEach((paragraph, index) => {
-            if (index === 0) {
-              paragraph.textContent = ''
-              paragraph.appendChild(document.createElement('br'))
-              return
-            }
-            paragraph.remove()
-          })
-        } else {
-          cell.textContent = ''
-        }
-      })
-      root.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
     }
 
     const insertHardBreak = () => {
@@ -617,6 +486,17 @@ function EditorCanvas({
     const convertFenceToCodeBlock = () => {
       const { block } = editor.getTextCursorPosition()
       const text = extractText(block.content)
+      const fenceBlockMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)\n([\s\S]*?)\n```$/)
+      if (block.type === 'paragraph' && fenceBlockMatch) {
+        const { insertedBlocks } = editor.replaceBlocks([block], [{
+          type: 'codeBlock',
+          props: { language: fenceBlockMatch[1] || 'text' },
+          content: fenceBlockMatch[2],
+        }])
+        if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'end')
+        return true
+      }
+
       const fenceMatch = text.match(/^```([a-zA-Z0-9_+#.-]*)$/)
       if (block.type !== 'paragraph' || !fenceMatch) return false
 
@@ -633,25 +513,10 @@ function EditorCanvas({
       const targetCell = getCell(event.target)
 
       if (event.key === 'Escape') {
-        clearSelectedCells()
-        exitTableEditMode()
-        return
-      }
-
-      if (event.key === 'Enter' && activePreviewTableRef.current && !targetCell) {
-        event.preventDefault()
-        enterTableEditMode(activePreviewTableRef.current)
         return
       }
 
       if (event.key === 'Enter' && targetCell) {
-        const table = getTable(targetCell)
-        if (table && editingTableRef.current !== table && activePreviewTableRef.current === table) {
-          event.preventDefault()
-          enterTableEditMode(table)
-          return
-        }
-
         if (!event.ctrlKey && !event.metaKey && !event.altKey && insertHardBreak()) {
           event.preventDefault()
           event.stopPropagation()
@@ -669,70 +534,9 @@ function EditorCanvas({
       }
     }
 
-    const handlePointerDown = (event: PointerEvent) => {
-      const cell = getCell(event.target)
-      if (!cell) {
-        if (event.target instanceof HTMLElement && event.target.closest('.table-widgets-container')) return
-        clearSelectedCells()
-        exitTableEditMode()
-        return
-      }
-
-      const table = getTable(cell)
-      if (!table) return
-
-      if (event.detail >= 2) {
-        enterTableEditMode(table)
-        return
-      }
-
-      if (editingTableRef.current === table) return
-
-      event.preventDefault()
-      event.stopPropagation()
-      isDraggingTableSelectionRef.current = true
-      if (event.shiftKey && lastSelectedCellRef.current) {
-        dragAnchorCellRef.current = lastSelectedCellRef.current
-        selectCellRange(lastSelectedCellRef.current, cell)
-      } else if (event.ctrlKey || event.metaKey) {
-        dragAnchorCellRef.current = cell
-        addCellToSelection(cell)
-      } else {
-        dragAnchorCellRef.current = cell
-        selectCells([cell])
-      }
-    }
-
-    const handlePointerOver = (event: PointerEvent) => {
-      if (!isDraggingTableSelectionRef.current) return
-      const cell = getCell(event.target)
-      if (!cell || !dragAnchorCellRef.current) return
-      selectCellRange(dragAnchorCellRef.current, cell)
-    }
-
-    const stopDragSelection = () => {
-      isDraggingTableSelectionRef.current = false
-      dragAnchorCellRef.current = null
-    }
-
-    const handleCopy = (event: ClipboardEvent) => {
-      if (selectedTableCellsRef.current.length === 0) return
-      if (!activePreviewTableRef.current || !root.contains(activePreviewTableRef.current)) return
-      event.preventDefault()
-      event.clipboardData?.setData('text/plain', getSelectedCellText())
-    }
-
-    const handleCut = (event: ClipboardEvent) => {
-      if (selectedTableCellsRef.current.length === 0) return
-      if (!activePreviewTableRef.current || !root.contains(activePreviewTableRef.current)) return
-      event.preventDefault()
-      event.clipboardData?.setData('text/plain', getSelectedCellText())
-      clearSelectedCellContent()
-    }
-
     const handlePaste = (event: ClipboardEvent) => {
       const text = event.clipboardData?.getData('text/plain') || ''
-      if (!text.includes('```') || selectedTableCellsRef.current.length > 0) return
+      if (!text.includes('```')) return
 
       event.preventDefault()
       const blocks = editor.tryParseMarkdownToBlocks(text)
@@ -749,21 +553,11 @@ function EditorCanvas({
     }
 
     root.addEventListener('keydown', handleKeyDown, true)
-    root.addEventListener('pointerdown', handlePointerDown, true)
-    root.addEventListener('pointerover', handlePointerOver, true)
     root.addEventListener('paste', handlePaste, true)
-    window.addEventListener('pointerup', stopDragSelection)
-    document.addEventListener('copy', handleCopy)
-    document.addEventListener('cut', handleCut)
 
     return () => {
       root.removeEventListener('keydown', handleKeyDown, true)
-      root.removeEventListener('pointerdown', handlePointerDown, true)
-      root.removeEventListener('pointerover', handlePointerOver, true)
       root.removeEventListener('paste', handlePaste, true)
-      window.removeEventListener('pointerup', stopDragSelection)
-      document.removeEventListener('copy', handleCopy)
-      document.removeEventListener('cut', handleCut)
     }
   }, [editor])
 
