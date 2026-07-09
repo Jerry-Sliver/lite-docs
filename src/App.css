@@ -709,21 +709,13 @@ button:hover {
   background: transparent;
 }
 
-.editor-card [data-content-type=table] table {
-  cursor: cell;
-}
-
 .editor-card [data-content-type=table] td,
 .editor-card [data-content-type=table] th {
   position: relative;
 }
 
-.editor-card [data-content-type=table] .ld-table-cell-preview {
-  user-select: none;
-}
-
-.editor-card [data-content-type=table] .ld-table-cell-preview * {
-  pointer-events: none;
+.editor-card [data-content-type=table] table.ld-table-preview-active {
+  cursor: cell;
 }
 
 .editor-card [data-content-type=table] table.ld-table-preview-active .ld-table-cell-selected::after {
@@ -738,14 +730,6 @@ button:hover {
 
 .editor-card [data-content-type=table] table.ld-table-edit-active {
   cursor: text;
-}
-
-.editor-card [data-content-type=table] table.ld-table-edit-active td,
-.editor-card [data-content-type=table] table.ld-table-edit-active th,
-.editor-card [data-content-type=table] table.ld-table-edit-active td *,
-.editor-card [data-content-type=table] table.ld-table-edit-active th * {
-  user-select: text;
-  pointer-events: auto;
 }
 
 .panel {

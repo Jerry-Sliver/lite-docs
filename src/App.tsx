@@ -458,7 +458,6 @@ function EditorCanvas({
 
   useEffect(() => {
     const root = editor.prosemirrorView.dom
-    const tableSelector = '[data-content-type=table] table'
 
     const getCell = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return null
@@ -469,24 +468,6 @@ function EditorCanvas({
 
     const getTable = (cell: HTMLTableCellElement | null) => cell?.closest<HTMLTableElement>('table') || null
 
-    const setTableCellEditable = (table: HTMLTableElement, editable: boolean) => {
-      Array.from(table.querySelectorAll<HTMLTableCellElement>('td, th')).forEach((cell) => {
-        if (editable) {
-          cell.removeAttribute('contenteditable')
-          cell.classList.remove('ld-table-cell-preview')
-          return
-        }
-        cell.contentEditable = 'false'
-        cell.classList.add('ld-table-cell-preview')
-      })
-    }
-
-    const syncTablePreviewMode = () => {
-      Array.from(root.querySelectorAll<HTMLTableElement>(tableSelector)).forEach((table) => {
-        setTableCellEditable(table, editingTableRef.current === table)
-      })
-    }
-
     const clearSelectedCells = () => {
       selectedTableCellsRef.current.forEach((cell) => cell.classList.remove('ld-table-cell-selected'))
       selectedTableCellsRef.current = []
@@ -496,22 +477,15 @@ function EditorCanvas({
     }
 
     const exitTableEditMode = () => {
-      if (editingTableRef.current) {
-        editingTableRef.current.classList.remove('ld-table-edit-active')
-        setTableCellEditable(editingTableRef.current, false)
-      }
+      editingTableRef.current?.classList.remove('ld-table-edit-active')
       editingTableRef.current = null
     }
 
     const enterTableEditMode = (table: HTMLTableElement) => {
       clearSelectedCells()
-      if (editingTableRef.current) {
-        editingTableRef.current.classList.remove('ld-table-edit-active')
-        setTableCellEditable(editingTableRef.current, false)
-      }
+      editingTableRef.current?.classList.remove('ld-table-edit-active')
       editingTableRef.current = table
       table.classList.add('ld-table-edit-active')
-      setTableCellEditable(table, true)
       editor.prosemirrorView.focus()
     }
 
@@ -774,8 +748,6 @@ function EditorCanvas({
       if (insertedBlocks[0]) editor.setTextCursorPosition(insertedBlocks[0], 'start')
     }
 
-    const observer = new MutationObserver(syncTablePreviewMode)
-
     root.addEventListener('keydown', handleKeyDown, true)
     root.addEventListener('pointerdown', handlePointerDown, true)
     root.addEventListener('pointerover', handlePointerOver, true)
@@ -783,8 +755,6 @@ function EditorCanvas({
     window.addEventListener('pointerup', stopDragSelection)
     document.addEventListener('copy', handleCopy)
     document.addEventListener('cut', handleCut)
-    syncTablePreviewMode()
-    observer.observe(root, { childList: true, subtree: true })
 
     return () => {
       root.removeEventListener('keydown', handleKeyDown, true)
@@ -794,7 +764,6 @@ function EditorCanvas({
       window.removeEventListener('pointerup', stopDragSelection)
       document.removeEventListener('copy', handleCopy)
       document.removeEventListener('cut', handleCut)
-      observer.disconnect()
     }
   }, [editor])
 
